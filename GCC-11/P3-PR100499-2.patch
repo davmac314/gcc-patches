@@ -1,0 +1,21 @@
+diff -urN gcc-11.5.0-p6-1/gcc/fold-const.c gcc-11.5.0-p6-2/gcc/fold-const.c
+--- gcc-11.5.0-p6-1/gcc/fold-const.c	2024-07-19 15:52:43.893494076 +1000
++++ gcc-11.5.0-p6-2/gcc/fold-const.c	2024-11-26 20:43:32.175308585 +1000
+@@ -14142,14 +14142,14 @@
+ 	}
+       return 0;
+ 
+-    case NOP_EXPR:
++    CASE_CONVERT:
+       /* Can't handle conversions from non-integral or wider integral type.  */
+       if ((TREE_CODE (TREE_TYPE (TREE_OPERAND (top, 0))) != INTEGER_TYPE)
+ 	  || (TYPE_PRECISION (type)
+ 	      < TYPE_PRECISION (TREE_TYPE (TREE_OPERAND (top, 0)))))
+ 	return 0;
+-
+-      /* fall through */
++      return multiple_of_p (TREE_TYPE (TREE_OPERAND (top, 0)),
++			    TREE_OPERAND (top, 0), bottom);
+ 
+     case SAVE_EXPR:
+       return multiple_of_p (type, TREE_OPERAND (top, 0), bottom);

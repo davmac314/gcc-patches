@@ -1,0 +1,64 @@
+diff -urN gcc-11.5.0-P11/gcc/testsuite/gcc.dg/torture/pr116585.c gcc-11.5.0-P13/gcc/testsuite/gcc.dg/torture/pr116585.c
+--- gcc-11.5.0-P11/gcc/testsuite/gcc.dg/torture/pr116585.c	1970-01-01 10:00:00.000000000 +1000
++++ gcc-11.5.0-P13/gcc/testsuite/gcc.dg/torture/pr116585.c	2024-11-27 12:02:16.515014564 +1000
+@@ -0,0 +1,32 @@
++/* { dg-do compile } */
++
++char *s1, *s2;
++extern int* my_alloc (int);
++extern int _setjmp ();
++extern void bar();
++void foo(int s1len, int s2len)
++{
++  int e;
++  e = _setjmp ();
++    {
++      int l, i;
++      int *md = my_alloc(((sizeof(int)) * (s1len + 1) * (s2len)));
++      s1len++;
++      for (; s1len; l)
++	for (; s2len; l)
++	  for (; s1len; i)
++	    {
++	      int j = 1;
++	      for (; j < s2len; j++)
++		{
++		  int cost;
++		  if (s1[1] == s2[1])
++		    cost = 0;
++		  else
++		    cost = 1;
++		  md[j * s1len ] = ((cost));
++		}
++	    }
++      bar();
++    }
++}
+diff -urN gcc-11.5.0-P11/gcc/tree-data-ref.c gcc-11.5.0-P13/gcc/tree-data-ref.c
+--- gcc-11.5.0-P11/gcc/tree-data-ref.c	2024-07-19 15:52:46.589539384 +1000
++++ gcc-11.5.0-P13/gcc/tree-data-ref.c	2024-11-27 12:02:16.515014564 +1000
+@@ -778,6 +778,14 @@
+   *var = NULL_TREE;
+   *off = NULL_TREE;
+ 
++  if (TREE_CODE (op0) == SSA_NAME
++      && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op0))
++    return false;
++  if (op1
++      && TREE_CODE (op1) == SSA_NAME
++      && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op1))
++    return false;
++
+   switch (code)
+     {
+     case INTEGER_CST:
+@@ -870,9 +878,6 @@
+ 
+     case SSA_NAME:
+       {
+-	if (SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op0))
+-	  return false;
+-
+ 	gimple *def_stmt = SSA_NAME_DEF_STMT (op0);
+ 	enum tree_code subcode;
+ 

@@ -1,0 +1,303 @@
+diff -urN gcc-11.5.0-p6-2/gcc/fold-const.c gcc-11.5.0-p6-3/gcc/fold-const.c
+--- gcc-11.5.0-p6-2/gcc/fold-const.c	2024-11-26 20:43:32.175308585 +1000
++++ gcc-11.5.0-p6-3/gcc/fold-const.c	2024-11-26 20:45:58.295307806 +1000
+@@ -14055,10 +14055,16 @@
+      SAVE_EXPR (I) * SAVE_EXPR (J)
+ 
+    (where the same SAVE_EXPR (J) is used in the original and the
+-   transformed version).  */
++   transformed version).
++
++   NOWRAP specifies whether all outer operations in TYPE should
++   be considered not wrapping.  Any type conversion within TOP acts
++   as a barrier and we will fall back to NOWRAP being false.
++   NOWRAP is mostly used to treat expressions in TYPE_SIZE and friends
++   as not wrapping even though they are generally using unsigned arithmetic.  */
+ 
+ int
+-multiple_of_p (tree type, const_tree top, const_tree bottom)
++multiple_of_p (tree type, const_tree top, const_tree bottom, bool nowrap)
+ {
+   gimple *stmt;
+   tree t1, op1, op2;
+@@ -14076,10 +14082,17 @@
+ 	 a multiple of BOTTOM then TOP is a multiple of BOTTOM.  */
+       if (!integer_pow2p (bottom))
+ 	return 0;
+-      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom)
+-	      || multiple_of_p (type, TREE_OPERAND (top, 0), bottom));
++      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom, nowrap)
++	      || multiple_of_p (type, TREE_OPERAND (top, 0), bottom, nowrap));
+ 
+     case MULT_EXPR:
++      /* If the multiplication can wrap we cannot recurse further unless
++	 the bottom is a power of two which is where wrapping does not
++	 matter.  */
++      if (!nowrap
++	  && !TYPE_OVERFLOW_UNDEFINED (type)
++	  && !integer_pow2p (bottom))
++	return 0;
+       if (TREE_CODE (bottom) == INTEGER_CST)
+ 	{
+ 	  op1 = TREE_OPERAND (top, 0);
+@@ -14088,43 +14101,51 @@
+ 	    std::swap (op1, op2);
+ 	  if (TREE_CODE (op2) == INTEGER_CST)
+ 	    {
+-	      if (multiple_of_p (type, op2, bottom))
++	      if (multiple_of_p (type, op2, bottom, nowrap))
+ 		return 1;
+ 	      /* Handle multiple_of_p ((x * 2 + 2) * 4, 8).  */
+-	      if (multiple_of_p (type, bottom, op2))
++	      if (multiple_of_p (type, bottom, op2, nowrap))
+ 		{
+ 		  widest_int w = wi::sdiv_trunc (wi::to_widest (bottom),
+ 						 wi::to_widest (op2));
+ 		  if (wi::fits_to_tree_p (w, TREE_TYPE (bottom)))
+ 		    {
+ 		      op2 = wide_int_to_tree (TREE_TYPE (bottom), w);
+-		      return multiple_of_p (type, op1, op2);
++		      return multiple_of_p (type, op1, op2, nowrap);
+ 		    }
+ 		}
+-	      return multiple_of_p (type, op1, bottom);
++	      return multiple_of_p (type, op1, bottom, nowrap);
+ 	    }
+ 	}
+-      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom)
+-	      || multiple_of_p (type, TREE_OPERAND (top, 0), bottom));
++      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom, nowrap)
++	      || multiple_of_p (type, TREE_OPERAND (top, 0), bottom, nowrap));
+ 
+     case MINUS_EXPR:
+-      /* It is impossible to prove if op0 - op1 is multiple of bottom
+-	 precisely, so be conservative here checking if both op0 and op1
+-	 are multiple of bottom.  Note we check the second operand first
+-	 since it's usually simpler.  */
+-      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom)
+-	      && multiple_of_p (type, TREE_OPERAND (top, 0), bottom));
+-
+     case PLUS_EXPR:
+-      /* The same as MINUS_EXPR, but handle cases like op0 + 0xfffffffd
+-	 as op0 - 3 if the expression has unsigned type.  For example,
+-	 (X / 3) + 0xfffffffd is multiple of 3, but 0xfffffffd is not.  */
++      /* If the addition or subtraction can wrap we cannot recurse further
++	 unless bottom is a power of two which is where wrapping does not
++	 matter.  */
++      if (!nowrap
++	  && !TYPE_OVERFLOW_UNDEFINED (type)
++	  && !integer_pow2p (bottom))
++	return 0;
++
++      /* Handle cases like op0 + 0xfffffffd as op0 - 3 if the expression has
++	 unsigned type.  For example, (X / 3) + 0xfffffffd is multiple of 3,
++	 but 0xfffffffd is not.  */
+       op1 = TREE_OPERAND (top, 1);
+-      if (TYPE_UNSIGNED (type)
++      if (TREE_CODE (top) == PLUS_EXPR
++	  && nowrap
++	  && TYPE_UNSIGNED (type)
+ 	  && TREE_CODE (op1) == INTEGER_CST && tree_int_cst_sign_bit (op1))
+ 	op1 = fold_build1 (NEGATE_EXPR, type, op1);
+-      return (multiple_of_p (type, op1, bottom)
+-	      && multiple_of_p (type, TREE_OPERAND (top, 0), bottom));
++
++      /* It is impossible to prove if op0 +- op1 is multiple of bottom
++	 precisely, so be conservative here checking if both op0 and op1
++	 are multiple of bottom.  Note we check the second operand first
++	 since it's usually simpler.  */
++      return (multiple_of_p (type, op1, bottom, nowrap)
++	      && multiple_of_p (type, TREE_OPERAND (top, 0), bottom, nowrap));
+ 
+     case LSHIFT_EXPR:
+       if (TREE_CODE (TREE_OPERAND (top, 1)) == INTEGER_CST)
+@@ -14148,15 +14169,17 @@
+ 	  || (TYPE_PRECISION (type)
+ 	      < TYPE_PRECISION (TREE_TYPE (TREE_OPERAND (top, 0)))))
+ 	return 0;
++      /* NOWRAP only extends to operations in the outermost type so
++	 make sure to strip it off here.  */
+       return multiple_of_p (TREE_TYPE (TREE_OPERAND (top, 0)),
+-			    TREE_OPERAND (top, 0), bottom);
++			    TREE_OPERAND (top, 0), bottom, false);
+ 
+     case SAVE_EXPR:
+-      return multiple_of_p (type, TREE_OPERAND (top, 0), bottom);
++      return multiple_of_p (type, TREE_OPERAND (top, 0), bottom, nowrap);
+ 
+     case COND_EXPR:
+-      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom)
+-	      && multiple_of_p (type, TREE_OPERAND (top, 2), bottom));
++      return (multiple_of_p (type, TREE_OPERAND (top, 1), bottom, nowrap)
++	      && multiple_of_p (type, TREE_OPERAND (top, 2), bottom, nowrap));
+ 
+     case INTEGER_CST:
+       if (TREE_CODE (bottom) != INTEGER_CST
+diff -urN gcc-11.5.0-p6-2/gcc/fold-const.h gcc-11.5.0-p6-3/gcc/fold-const.h
+--- gcc-11.5.0-p6-2/gcc/fold-const.h	2024-07-19 15:52:43.893494076 +1000
++++ gcc-11.5.0-p6-3/gcc/fold-const.h	2024-11-26 20:45:58.295307806 +1000
+@@ -94,7 +94,7 @@
+ extern enum tree_code fold_div_compare (enum tree_code, tree, tree,
+ 					tree *, tree *, bool *);
+ extern bool operand_equal_p (const_tree, const_tree, unsigned int flags = 0);
+-extern int multiple_of_p (tree, const_tree, const_tree);
++extern int multiple_of_p (tree, const_tree, const_tree, bool = true);
+ #define omit_one_operand(T1,T2,T3)\
+    omit_one_operand_loc (UNKNOWN_LOCATION, T1, T2, T3)
+ extern tree omit_one_operand_loc (location_t, tree, tree, tree);
+diff -urN gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-1.c gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-1.c
+--- gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-1.c	1970-01-01 10:00:00.000000000 +1000
++++ gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-1.c	2024-11-26 20:45:58.295307806 +1000
+@@ -0,0 +1,27 @@
++/* { dg-do run } */
++
++typedef __UINT16_TYPE__ uint16_t;
++typedef __INT32_TYPE__ int32_t;
++static uint16_t g_2823 = 0xEC75L;
++static uint16_t g_116 = 0xBC07L;
++
++static uint16_t
++safe_mul_func_uint16_t_u_u(uint16_t ui1, uint16_t ui2)
++{
++  return ((unsigned int)ui1) * ((unsigned int)ui2);
++}
++
++int main ()
++{
++  uint16_t l_2815 = 0xffff;
++  uint16_t *l_2821 = &g_116;
++  uint16_t *l_2822 = &g_2823;
++
++lbl_2826:
++  l_2815 &= 0x1eae;
++  if (safe_mul_func_uint16_t_u_u(((*l_2821) = l_2815), (--(*l_2822))))
++    goto lbl_2826;
++  if (g_2823 != 32768)
++    __builtin_abort ();
++  return 0;
++}
+diff -urN gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-2.c gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-2.c
+--- gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-2.c	1970-01-01 10:00:00.000000000 +1000
++++ gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-2.c	2024-11-26 20:45:58.295307806 +1000
+@@ -0,0 +1,16 @@
++/* { dg-do run } */
++
++unsigned char ag = 55;
++unsigned i;
++int main()
++{
++  unsigned char c;
++  unsigned char a = ag;
++d:
++  c = a-- * 52;
++  if (c)
++    goto d;
++  if (a != 255)
++    __builtin_abort ();
++  return 0;
++}
+diff -urN gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-3.c gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-3.c
+--- gcc-11.5.0-p6-2/gcc/testsuite/gcc.dg/torture/pr100499-3.c	1970-01-01 10:00:00.000000000 +1000
++++ gcc-11.5.0-p6-3/gcc/testsuite/gcc.dg/torture/pr100499-3.c	2024-11-26 20:45:58.295307806 +1000
+@@ -0,0 +1,14 @@
++/* { dg-do run } */
++
++int a = 0;
++unsigned char b = 0;
++
++int main() {
++  a - 6;
++  for (; a >= -13; a = a - 8)
++    while((unsigned char)(b-- * 6))
++      ;
++  if (b != 127)
++    __builtin_abort();
++  return 0;
++}
+diff -urN gcc-11.5.0-p6-2/gcc/tree-ssa-loop-niter.c gcc-11.5.0-p6-3/gcc/tree-ssa-loop-niter.c
+--- gcc-11.5.0-p6-2/gcc/tree-ssa-loop-niter.c	2024-11-26 20:38:00.495310354 +1000
++++ gcc-11.5.0-p6-3/gcc/tree-ssa-loop-niter.c	2024-11-26 20:45:58.295307806 +1000
+@@ -1024,17 +1024,21 @@
+ 	    new_base = base - step > FINAL ; step < 0
+ 					     && base - step doesn't overflow
+ 
+-       2') |FINAL - new_base| is an exact multiple of step.
+-
+-     Please refer to PR34114 as an example of loop-ch's impact, also refer
+-     to PR72817 as an example why condition 2') is necessary.
++     Please refer to PR34114 as an example of loop-ch's impact.
+ 
+      Note, for NE_EXPR, base equals to FINAL is a special case, in
+-     which the loop exits immediately, and the iv does not overflow.  */
++     which the loop exits immediately, and the iv does not overflow.
++
++     Also note, we prove condition 2) by checking base and final seperately
++     along with condition 1) or 1').  */
+   if (!niter->control.no_overflow
+-      && (integer_onep (s) || multiple_of_p (type, c, s)))
++      && (integer_onep (s)
++	  || (multiple_of_p (type, fold_convert (niter_type, iv->base), s,
++			     false)
++	      && multiple_of_p (type, fold_convert (niter_type, final), s,
++				false))))
+     {
+-      tree t, cond, new_c, relaxed_cond = boolean_false_node;
++      tree t, cond, relaxed_cond = boolean_false_node;
+ 
+       if (tree_int_cst_sign_bit (iv->step))
+ 	{
+@@ -1048,12 +1052,8 @@
+ 	      if (integer_nonzerop (t))
+ 		{
+ 		  t = fold_build2 (MINUS_EXPR, type, iv->base, iv->step);
+-		  new_c = fold_build2 (MINUS_EXPR, niter_type,
+-				       fold_convert (niter_type, t),
+-				       fold_convert (niter_type, final));
+-		  if (multiple_of_p (type, new_c, s))
+-		    relaxed_cond = fold_build2 (GT_EXPR, boolean_type_node,
+-						t, final);
++		  relaxed_cond = fold_build2 (GT_EXPR, boolean_type_node, t,
++					      final);
+ 		}
+ 	    }
+ 	}
+@@ -1069,12 +1069,8 @@
+ 	      if (integer_nonzerop (t))
+ 		{
+ 		  t = fold_build2 (MINUS_EXPR, type, iv->base, iv->step);
+-		  new_c = fold_build2 (MINUS_EXPR, niter_type,
+-				       fold_convert (niter_type, final),
+-				       fold_convert (niter_type, t));
+-		  if (multiple_of_p (type, new_c, s))
+-		    relaxed_cond = fold_build2 (LT_EXPR, boolean_type_node,
+-						t, final);
++		  relaxed_cond = fold_build2 (LT_EXPR, boolean_type_node, t,
++					      final);
+ 		}
+ 	    }
+ 	}
+@@ -1084,19 +1080,11 @@
+ 	t = simplify_using_initial_conditions (loop, relaxed_cond);
+ 
+       if (t && integer_onep (t))
+-	niter->control.no_overflow = true;
+-    }
+-
+-  /* First the trivial cases -- when the step is 1.  */
+-  if (integer_onep (s))
+-    {
+-      niter->niter = c;
+-      return true;
+-    }
+-  if (niter->control.no_overflow && multiple_of_p (type, c, s))
+-    {
+-      niter->niter = fold_build2 (FLOOR_DIV_EXPR, niter_type, c, s);
+-      return true;
++	{
++	  niter->control.no_overflow = true;
++	  niter->niter = fold_build2 (EXACT_DIV_EXPR, niter_type, c, s);
++	  return true;
++	}
+     }
+ 
+   /* Let nsd (step, size of mode) = d.  If d does not divide c, the loop

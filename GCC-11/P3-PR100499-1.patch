@@ -1,0 +1,62 @@
+diff -urN gcc-11.5.0-p5/gcc/tree-cfg.c gcc-11.5.0-p6-1/gcc/tree-cfg.c
+--- gcc-11.5.0-p5/gcc/tree-cfg.c	2024-07-19 15:52:46.589539384 +1000
++++ gcc-11.5.0-p6-1/gcc/tree-cfg.c	2024-11-26 20:40:33.635309537 +1000
+@@ -4373,7 +4373,8 @@
+ 					TREE_TYPE (rhs2_type))
+ 		 && multiple_p (TYPE_VECTOR_SUBPARTS (rhs1_type),
+ 				TYPE_VECTOR_SUBPARTS (rhs2_type))
+-		 && multiple_of_p (bitsizetype, rhs3, TYPE_SIZE (rhs2_type)))))
++		 && multiple_p (wi::to_poly_offset (rhs3),
++				wi::to_poly_offset (TYPE_SIZE (rhs2_type))))))
+ 	{
+ 	  error ("not allowed type combination in %qs", code_name);
+ 	  debug_generic_expr (rhs1_type);
+diff -urN gcc-11.5.0-p5/gcc/tree-ssa.c gcc-11.5.0-p6-1/gcc/tree-ssa.c
+--- gcc-11.5.0-p5/gcc/tree-ssa.c	2024-07-19 15:52:46.613539786 +1000
++++ gcc-11.5.0-p6-1/gcc/tree-ssa.c	2024-11-26 20:40:33.635309537 +1000
+@@ -1380,8 +1380,8 @@
+       if (TREE_CODE (TREE_TYPE (sym)) == VECTOR_TYPE
+ 	  && useless_type_conversion_p (TREE_TYPE (*tp),
+ 					TREE_TYPE (TREE_TYPE (sym)))
+-	  && multiple_of_p (sizetype, TREE_OPERAND (*tp, 1),
+-			    TYPE_SIZE_UNIT (TREE_TYPE (*tp))))
++	  && multiple_p (mem_ref_offset (*tp),
++			 wi::to_poly_offset (TYPE_SIZE_UNIT (TREE_TYPE (*tp)))))
+ 	{
+ 	  *tp = build3 (BIT_FIELD_REF, TREE_TYPE (*tp), sym, 
+ 			TYPE_SIZE (TREE_TYPE (*tp)),
+@@ -1469,8 +1469,8 @@
+ 	  && known_ge (mem_ref_offset (base), 0)
+ 	  && known_gt (wi::to_poly_offset (TYPE_SIZE_UNIT (TREE_TYPE (decl))),
+ 		       mem_ref_offset (base))
+-	  && multiple_of_p (sizetype, TREE_OPERAND (base, 1),
+-			    TYPE_SIZE_UNIT (TREE_TYPE (base))))
++	  && multiple_p (mem_ref_offset (base),
++			 wi::to_poly_offset (TYPE_SIZE_UNIT (TREE_TYPE (base)))))
+ 	return NULL_TREE;
+       /* For same sizes and zero offset we can use a VIEW_CONVERT_EXPR.  */
+       if (integer_zerop (TREE_OPERAND (base, 1))
+@@ -1555,8 +1555,8 @@
+ 	  && known_ge (mem_ref_offset (lhs), 0)
+ 	  && known_gt (wi::to_poly_offset (TYPE_SIZE_UNIT (TREE_TYPE (decl))),
+ 		       mem_ref_offset (lhs))
+-	  && multiple_of_p (sizetype, TREE_OPERAND (lhs, 1),
+-			    TYPE_SIZE_UNIT (TREE_TYPE (lhs)))
++	  && multiple_p (mem_ref_offset (lhs),
++			 wi::to_poly_offset (TYPE_SIZE_UNIT (TREE_TYPE (lhs))))
+ 	  && known_ge (wi::to_poly_offset (TYPE_SIZE (TREE_TYPE (decl))),
+ 		       wi::to_poly_offset (TYPE_SIZE (TREE_TYPE (lhs)))))
+ 	{
+@@ -1937,9 +1937,9 @@
+ 		    && known_gt (wi::to_poly_offset
+ 				   (TYPE_SIZE_UNIT (TREE_TYPE (sym))),
+ 				 mem_ref_offset (lhs))
+-		    && multiple_of_p (sizetype,
+-				      TREE_OPERAND (lhs, 1),
+-				      TYPE_SIZE_UNIT (TREE_TYPE (lhs))))
++		    && multiple_p (mem_ref_offset (lhs),
++				   wi::to_poly_offset
++				     (TYPE_SIZE_UNIT (TREE_TYPE (lhs)))))
+ 		  {
+ 		    tree val = gimple_assign_rhs1 (stmt);
+ 		    if (! types_compatible_p (TREE_TYPE (val),

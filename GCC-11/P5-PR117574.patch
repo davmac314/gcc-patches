@@ -1,0 +1,74 @@
+diff -urN gcc-11.5.0-p8/gcc/testsuite/gcc.dg/torture/pr117574-1.c gcc-11.5.0-p11/gcc/testsuite/gcc.dg/torture/pr117574-1.c
+--- gcc-11.5.0-p8/gcc/testsuite/gcc.dg/torture/pr117574-1.c	1970-01-01 10:00:00.000000000 +1000
++++ gcc-11.5.0-p11/gcc/testsuite/gcc.dg/torture/pr117574-1.c	2024-11-26 21:26:16.427294908 +1000
+@@ -0,0 +1,20 @@
++/* { dg-do run } */
++
++void abort (void);
++int a, c;
++long b;
++short d;
++static long e(long f, long h, long i) {
++  for (long g = f; g <= h; g += i)
++    b += g;
++  return b;
++}
++int main() {
++  c = 1;
++  for (; c >= 0; c--)
++    ;
++  for (; e(d + 40, d + 76, c + 51) < 4;)
++    ;
++  if (a != 0)
++    abort ();
++}
+diff -urN gcc-11.5.0-p8/gcc/tree-ssa-loop-niter.c gcc-11.5.0-p11/gcc/tree-ssa-loop-niter.c
+--- gcc-11.5.0-p8/gcc/tree-ssa-loop-niter.c	2024-11-26 20:47:37.131307278 +1000
++++ gcc-11.5.0-p11/gcc/tree-ssa-loop-niter.c	2024-11-26 21:26:16.427294908 +1000
+@@ -1190,17 +1190,6 @@
+ 	  if (integer_zerop (assumption))
+ 	    goto end;
+ 	}
+-      if (mpz_cmp (mmod, bnds->below) < 0)
+-	noloop = boolean_false_node;
+-      else if (POINTER_TYPE_P (type))
+-	noloop = fold_build2 (GT_EXPR, boolean_type_node,
+-			      iv0->base,
+-			      fold_build_pointer_plus (iv1->base, tmod));
+-      else
+-	noloop = fold_build2 (GT_EXPR, boolean_type_node,
+-			      iv0->base,
+-			      fold_build2 (PLUS_EXPR, type1,
+-					   iv1->base, tmod));
+     }
+   else
+     {
+@@ -1216,21 +1205,15 @@
+ 	  if (integer_zerop (assumption))
+ 	    goto end;
+ 	}
+-      if (mpz_cmp (mmod, bnds->below) < 0)
+-	noloop = boolean_false_node;
+-      else if (POINTER_TYPE_P (type))
+-	noloop = fold_build2 (GT_EXPR, boolean_type_node,
+-			      fold_build_pointer_plus (iv0->base,
+-						       fold_build1 (NEGATE_EXPR,
+-								    type1, tmod)),
+-			      iv1->base);
+-      else
+-	noloop = fold_build2 (GT_EXPR, boolean_type_node,
+-			      fold_build2 (MINUS_EXPR, type1,
+-					   iv0->base, tmod),
+-			      iv1->base);
+     }
+ 
++  /* IV0 < IV1 does not loop if IV0->base >= IV1->base.  */
++  if (mpz_cmp (mmod, bnds->below) < 0)
++    noloop = boolean_false_node;
++  else
++    noloop = fold_build2 (GE_EXPR, boolean_type_node,
++			  iv0->base, iv1->base);
++
+   if (!integer_nonzerop (assumption))
+     niter->assumptions = fold_build2 (TRUTH_AND_EXPR, boolean_type_node,
+ 				      niter->assumptions,
