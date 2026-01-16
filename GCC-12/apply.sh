@@ -22,3 +22,4 @@ patch -p1 < "$PATCHESDIR"/P3-PR120944.patch
 patch -p1 < "$PATCHESDIR"/P4-PR107176.patch
 patch -p1 < "$PATCHESDIR"/P5-PR119085.patch
 patch -p1 < "$PATCHESDIR"/P6-PR121370.patch
+patch -p1 < "$PATCHESDIR"/P7-PR121870.patch
