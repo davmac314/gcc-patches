@@ -1,0 +1,225 @@
+From c991125a92f0458261e7c46ec2049e3becd3cff0 Mon Sep 17 00:00:00 2001
+From: Martin Jambor <mjambor@suse.cz>
+Date: Wed, 15 Apr 2026 18:28:32 +0200
+Subject: [PATCH] sra: Dont use build_reconstructed_reference on MEM_REFs
+ changin types (PR122976)
+
+PR122976 is basically a variant of PR105860 but instead of a union
+there is a MEM_REF with a different type from the underlying DECL it
+accesses.  Like in the other bug, this confuses
+build_reconstructed_reference which then finds wrong compatible base
+and proceeds to identify a bogus FIELD_DECL to assign to a new access,
+leading to memory accesses to a wrong place.  This is caught by the
+internal verifier when checking but unfortunately leads to
+miscompilation without it.  The patch fixes this by clearing
+grp_same_access_path of such accesses so that
+build_reconstructed_reference is not used at all for them.
+
+The original testcase no longer exhibits the bug on master since
+r16-3201-gee67004474d521 (Andrew Pinski: forwprop: Copy prop
+aggregates into args) but it turns out that my artificial one still
+triggers.
+
+If you want more details on what is going on, here they are, the issue
+involves two VAR_DECLs:
+
+struct tySequence__6H5Oh5UUvVCLiakt9aTwtUQ ISRA.487D.19501;
+struct tyObject_Rlp__dNpAlq42D2iOFkwuW8WMyQ nextRef_1D.19109;
+
+where the types are (NI is int64_t):
+
+  struct tySequence__6H5Oh5UUvVCLiakt9aTwtUQ {
+    NI len; tySequence__6H5Oh5UUvVCLiakt9aTwtUQ_Content* p;
+  };
+
+  struct tyObject_Rlp__dNpAlq42D2iOFkwuW8WMyQ {
+   tySequence__6H5Oh5UUvVCLiakt9aTwtUQ bytes;
+   NI position;
+  };
+
+And an assignment between them:
+
+  ISRA.487D.19501 = MEM[(struct tySequence__6H5Oh5UUvVCLiakt9aTwtUQ *)&nextRef_1D.19109];
+
+which triggers code that tries to create accesses for LHS
+corresponding to those collected for nextRef_1.  Unfortunately the one
+for offset 64 was created from access:
+
+  MEM[(struct tyTuple__hnCuDR9cLe2lA3YIkwKIyuA *)&nextRef_1D.19109].Field1D.6487.lenD.5644 = 0;
+
+which brings a third type into the mix:
+
+  struct tyTuple__hnCuDR9cLe2lA3YIkwKIyuA {
+   NI Field0;
+   tySequence__6H5Oh5UUvVCLiakt9aTwtUQ Field1;
+  };
+
+which is setting the len field after the type-cast but in terms of the
+underlying type of the DECL, it is actually setting the pointer field.
+
+Because SRA looks at the accesses rather than the types, it also means
+that the access for the pointer was represented by a signed 64bit
+integer and the stored expression was the above, two COMPONENT_REFs
+bolted on top of the type changing MEM_REF.  The access also got the
+grp_same_access_path flag set, meaning we'd try to preserve the
+"access path," the chain of handled_references in many contexts such
+as propagating the accesses across assignments.
+
+And there things went wrong, build_reconstructed_reference found the
+MEM_REF, realized it was compatible with the base DECL and happily
+assumed that means that whatever was used on top of the MEM_REF can be
+used on top of the DECL to access the corresponding bit of memory.
+
+The wrong bit was not clearing grp_same_access_path, which we for
+example cleared when the MEM_REF had a non-zero offset and so this
+patch detects the situation and clears it.
+
+gcc/ChangeLog:
+
+2026-03-15  Martin Jambor  <mjambor@suse.cz>
+
+	PR tree-optimization/122976
+	* tree-sra.cc (path_comparable_for_same_access): Return false if the
+	base is a MEM_REF with a different underlying type.
+
+gcc/testsuite/ChangeLog:
+
+2026-03-18  Martin Jambor  <mjambor@suse.cz>
+
+	PR tree-optimization/122976
+	* gcc.dg/tree-ssa/pr122976.c: New test.
+
+(cherry picked from commit 0c286ea4006d31d066e7b11714e04f4be0a912de)
+---
+ gcc/testsuite/gcc.dg/tree-ssa/pr122976.c | 105 +++++++++++++++++++++++
+ gcc/tree-sra.cc                          |   5 ++
+ 2 files changed, 110 insertions(+)
+ create mode 100644 gcc/testsuite/gcc.dg/tree-ssa/pr122976.c
+
+diff --git a/gcc/testsuite/gcc.dg/tree-ssa/pr122976.c b/gcc/testsuite/gcc.dg/tree-ssa/pr122976.c
+new file mode 100644
+index 0000000000000..a08b6c0e6a481
+--- /dev/null
++++ b/gcc/testsuite/gcc.dg/tree-ssa/pr122976.c
+@@ -0,0 +1,105 @@
++/* { dg-do run } */
++/* { dg-options "-O2" } */
++
++typedef unsigned long NI;
++
++struct inner_t_Content
++{
++  int x[8], y[16];
++  char a[10], b[20], c[30];
++};
++
++struct inner_t {
++  NI len;
++  struct inner_t_Content* p;
++};
++
++struct outer_t {
++  struct inner_t bytes;
++  NI position;
++};
++
++struct localo_t {
++  struct outer_t fo;
++  char stuff[222];
++};
++
++struct alien_t {
++  NI Field0;
++  struct inner_t Field1;
++};
++
++static struct inner_t_Content gic;
++struct inner_t gis;
++struct outer_t gos;
++volatile int vgi;
++
++int __attribute__((noipa))
++get_int (void)
++{
++  return 0;
++}
++
++struct inner_t __attribute__((noipa))
++get_inner_t ()
++{
++  struct inner_t v = {0, (void *)0};
++  return v;
++}
++
++void __attribute__((noipa))
++use_inner_t (struct inner_t v)
++{
++  gis = v;
++}
++
++void __attribute__((noipa))
++init (void)
++{
++  gos.bytes.len = 15;
++  gos.bytes.p = &gic;
++}
++
++void __attribute__((noipa))
++check (void)
++{
++  if (gis.p != &gic)
++    __builtin_abort ();
++}
++
++static void foo (int m, struct outer_t *a)
++{
++  struct inner_t lis;
++
++  if (m == 20)
++      ((struct alien_t *) a)->Field1.len = 0;
++  if (m == 21)
++    lis = get_inner_t ();
++  else
++    lis = a->bytes;
++
++  vgi = get_int ();
++  if (m < 1)
++    use_inner_t (lis);
++  if (get_int ())
++    vgi = ((struct alien_t *) a)->Field1.len;
++
++}
++
++void bar (struct outer_t pos)
++{
++  struct localo_t los;
++  los.fo = pos;
++  los.fo.bytes.len = get_int ();
++  foo (get_int (), &los.fo);
++  gos = los.fo;
++}
++
++int main (int argc, char **argv)
++{
++  init ();
++  for (int i = 0; i <= get_int (); i++)
++    bar (gos);
++  check ();
++  return 0;
++}
+diff --git a/gcc/tree-sra.cc b/gcc/tree-sra.cc
+index c2dc9b77939fa..dd5319d13ae03 100644
+--- a/gcc/tree-sra.cc
++++ b/gcc/tree-sra.cc
+@@ -2154,6 +2154,11 @@ path_comparable_for_same_access (tree expr)
+     {
+       if (!zerop (TREE_OPERAND (expr, 1)))
+ 	return false;
++      gcc_assert (TREE_CODE (TREE_OPERAND (expr, 0)) == ADDR_EXPR
++		  && DECL_P (TREE_OPERAND (TREE_OPERAND (expr, 0), 0)));
++      if (TYPE_MAIN_VARIANT (TREE_TYPE (expr))
++	  != TYPE_MAIN_VARIANT (TREE_TYPE (TREE_OPERAND (TREE_OPERAND (expr, 0), 0))))
++	return false;
+     }
+   else
+     gcc_assert (DECL_P (expr));

@@ -1,0 +1,91 @@
+From 8959c51600c0d6376e96972092d5582f40de3613 Mon Sep 17 00:00:00 2001
+From: Richard Biener <rguenther@suse.de>
+Date: Fri, 9 May 2025 08:38:45 +0200
+Subject: [PATCH] rtl-optimization/120182 - wrong-code with RTL DSE and
+ constant addresses
+
+RTL DSE forms store groups from unique invariant bases but that is
+confused when presented with constant addresses where it assigns
+one store group per unique address.  That causes it to not consider
+0x101:QI to alias 0x100:SI.  Constant accesses can really alias
+to every object, in practice they appear for I/O and for access
+to objects fixed via linker scripts for example.  So simply avoid
+registering a store group for them.
+
+	PR rtl-optimization/120182
+	* dse.cc (canon_address): Constant addresses have no
+	separate store group.
+
+	* gcc.dg/torture/pr120182.c: New testcase.
+
+(cherry picked from commit b9434c3db900d5d037fdf2f64149b82800ceadf8)
+---
+ gcc/dse.cc                              |  5 ++-
+ gcc/testsuite/gcc.dg/torture/pr120182.c | 42 +++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+), 1 deletion(-)
+ create mode 100644 gcc/testsuite/gcc.dg/torture/pr120182.c
+
+diff --git a/gcc/dse.cc b/gcc/dse.cc
+index a2db8d1cc32fe..80a0a0f396152 100644
+--- a/gcc/dse.cc
++++ b/gcc/dse.cc
+@@ -1186,7 +1186,10 @@ canon_address (rtx mem,
+       address = strip_offset_and_add (address, offset);
+ 
+       if (ADDR_SPACE_GENERIC_P (MEM_ADDR_SPACE (mem))
+-	  && const_or_frame_p (address))
++	  && const_or_frame_p (address)
++	  /* Literal addresses can alias any base, avoid creating a
++	     group for them.  */
++	  && ! CONST_SCALAR_INT_P (address))
+ 	{
+ 	  group_info *group = get_group_info (address);
+ 
+diff --git a/gcc/testsuite/gcc.dg/torture/pr120182.c b/gcc/testsuite/gcc.dg/torture/pr120182.c
+new file mode 100644
+index 0000000000000..5e2d171ef985f
+--- /dev/null
++++ b/gcc/testsuite/gcc.dg/torture/pr120182.c
+@@ -0,0 +1,42 @@
++/* { dg-do run { target { { *-*-linux* *-*-gnu* *-*-uclinux* } && mmap } } } */
++
++#include <unistd.h>
++#include <stdlib.h>
++#include <sys/mman.h>
++
++struct S
++{
++  struct S *next;
++};
++
++static void __attribute__((noipa))
++allocate(void *addr, unsigned long long size)
++{
++  void *ptr = mmap((void *)addr, size,
++		   PROT_READ | PROT_WRITE,
++		   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
++		   -1, 0);
++  if(ptr != addr)
++    exit(0);
++}
++
++int main (void)
++{
++  int size = 0x8000;
++  char *ptr = (char *)0x288000ull;
++  allocate((void *)ptr, size);
++
++  struct S *s1 = (struct S *)ptr;
++  struct S *s2 = (struct S *)256;
++  for (int i = 0; i < 3; i++)
++    {
++      for(char *addr = (char *)s1; addr < (char *)s1 + sizeof(*s1); ++addr)
++	*addr = 0;
++
++      if(s1->next)
++	s1->next = s1->next->next = s2;
++      else
++	s1->next = s2;
++    }
++  return 0;
++}
