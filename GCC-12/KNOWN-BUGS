@@ -1,0 +1,11 @@
+Issues to watch (known bugs not fixed on later branch):
+------------------------------------------------------
+125683 - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125683
+125771 - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125771
+
+Potential backports:
+-------------------
+123298 - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=123298
+  Fixed on trunk but likely difficult to backport.
+125786 - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=123298
+  Non-trivial backport.
