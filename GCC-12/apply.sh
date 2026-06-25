@@ -33,3 +33,6 @@ patch -p1 < "$PATCHESDIR"/P14-PR122104.patch
 patch -p1 < "$PATCHESDIR"/P15-PR123156.patch
 patch -p1 < "$PATCHESDIR"/P16-PR120182.patch
 patch -p1 < "$PATCHESDIR"/P17-PR123602.patch
+patch -p1 < "$PATCHESDIR"/P18-PR122537.patch
+patch -p1 < "$PATCHESDIR"/P19-PR123061.patch
+patch -p1 < "$PATCHESDIR"/P20-PR125774.patch

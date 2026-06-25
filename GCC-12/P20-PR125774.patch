@@ -1,0 +1,67 @@
+diff --git a/gcc/gimple-range-fold.cc b/gcc/gimple-range-fold.cc
+index c3f720a786f6..9dea0f64836a 100644
+--- a/gcc/gimple-range-fold.cc
++++ b/gcc/gimple-range-fold.cc
+@@ -1570,7 +1570,7 @@ fold_using_range::relation_fold_and_or (irange& lhs_range, gimple *s,
+     return;
+ 
+   if (reverse_op2)
+-    relation2 = relation_negate (relation2);
++    relation2 = relation_swap (relation2);
+ 
+   // x && y is false if the relation intersection of the true cases is NULL.
+   if (is_and && relation_intersect (relation1, relation2) == VREL_UNDEFINED)
+diff --git a/gcc/testsuite/gcc.dg/torture/pr125774-1.c b/gcc/testsuite/gcc.dg/torture/pr125774-1.c
+new file mode 100644
+index 000000000000..00686270d1e5
+--- /dev/null
++++ b/gcc/testsuite/gcc.dg/torture/pr125774-1.c
+@@ -0,0 +1,48 @@
++/* { dg-do run } */
++/* { dg-additional-options "-fgimple -fdump-tree-optimized" } */
++/* { dg-skip-if "" { *-*-* } { "-fno-fat-lto-objects" } { "" } } */
++/* PR tree-optimization/125774 */
++
++__attribute__((noipa))
++_Bool __GIMPLE (ssa,startwith("dom2"))
++f (int a, int b)
++{
++  _Bool _3;
++  _Bool _4;
++  _Bool _5;
++
++  __BB(2):
++  _3 = a_1(D) > b_2(D);
++  _4 = b_2(D) > a_1(D);
++  _5 = _3 | _4;
++  return _5;
++}
++
++__attribute__((noipa))
++_Bool __GIMPLE (ssa,startwith("dom2"))
++f1 (int a, int b)
++{
++  _Bool _3;
++  _Bool _4;
++  _Bool _5;
++
++  __BB(2):
++  _3 = a_1(D) > b_2(D);
++  _4 = a_1(D) < b_2(D);
++  _5 = _3 | _4;
++  return _5;
++}
++
++int main()
++{
++  int a = 10, b = 10;
++  if (f(a,b))
++    __builtin_abort();
++  if (f1(a,b))
++    __builtin_abort();
++  return 0;
++}
++
++/* { dg-final { scan-tree-dump-not "return 1" "optimized" } } */
++/* Both functions should be optimized to `a_1 != b_2`. */
++/* { dg-final { scan-tree-dump-times "a_1.D. != b_2.D." 2 "optimized" { target __OPTIMIZE__ } } } */

@@ -1,0 +1,37 @@
+diff --git a/gcc/testsuite/gcc.dg/torture/pr122537.c b/gcc/testsuite/gcc.dg/torture/pr122537.c
+new file mode 100644
+index 000000000000..8fc64abcffdd
+--- /dev/null
++++ b/gcc/testsuite/gcc.dg/torture/pr122537.c
+@@ -0,0 +1,18 @@
++/* { dg-do run } */
++/* { dg-additional-options "-fwrapv" } */
++
++void abort ();
++int a, b;
++int main()
++{
++  int c = 61;
++  int d = 61;
++  c += 8;
++  while (c + a - 80 >= d + a - 80) {
++    c -= d;
++    b++;
++  }
++  if (b != 1)
++    abort ();
++  return 0;
++}
+diff --git a/gcc/tree-ssa-loop-niter.cc b/gcc/tree-ssa-loop-niter.cc
+index 9ce881344142..65cf979956b9 100644
+--- a/gcc/tree-ssa-loop-niter.cc
++++ b/gcc/tree-ssa-loop-niter.cc
+@@ -1218,7 +1218,7 @@ number_of_iterations_lt_to_ne (tree type, affine_iv *iv0, affine_iv *iv1,
+     }
+ 
+   /* IV0 < IV1 does not loop if IV0->base >= IV1->base.  */
+-  if (mpz_cmp (mmod, bnds->below) < 0)
++  if (fv_comp_no_overflow && mpz_cmp (mmod, bnds->below) < 0)
+     noloop = boolean_false_node;
+   else
+     noloop = fold_build2 (GE_EXPR, boolean_type_node,
